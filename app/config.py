@@ -67,3 +67,4 @@ def get_settings() -> Settings:
 
 # Module-level singleton — allows `from app.config import settings`
 settings = get_settings()
+ 
