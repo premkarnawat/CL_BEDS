@@ -112,3 +112,4 @@ async def fuse_modalities(
         fusion=fusion_result,
         shap=shap_report,
     )
+ 
