@@ -45,3 +45,4 @@ async def init_db():
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
     logger.info("Database connection OK")
+ 
