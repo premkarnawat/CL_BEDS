@@ -12,11 +12,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
-from app.services.cmes_service import compute_cmes
+from app.services.cmes_service import compute_cmes_index as compute_cmes
 from app.services.fusion_service import fuse_modalities
-from app.services.keystroke_service import extract_keystroke_features
-from app.services.mouse_service import extract_mouse_features
-from app.services.rppg_service import compute_hrv
+from app.services.keystroke_service import compute_typing_irregularity as extract_keystroke_features
+from app.services.mouse_service import compute_mouse_stiffness as extract_mouse_features
+from app.services.rppg_service import compute_hrv_score as compute_hrv
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
