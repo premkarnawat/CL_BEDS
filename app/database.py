@@ -1,40 +1,36 @@
 """
-CL-BEDS Database Module
-Async SQLAlchemy + Supabase connection management.
+CL-BEDS Database — lazy asyncpg engine. No psycopg2.
 """
-
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+import logging
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
-from app.config import get_settings
+logger = logging.getLogger(__name__)
+_engine = None
+_SessionLocal = None
 
-settings = get_settings()
-
-# Create async engine — uses asyncpg driver
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.DEBUG,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
-    pool_recycle=300,
-)
-
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=False,
-    autocommit=False,
-)
-
+def _get_engine():
+    global _engine, _SessionLocal
+    if _engine is not None:
+        return _engine, _SessionLocal
+    from app.config import settings
+    url = settings.DATABASE_URL
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+    elif url.startswith("postgresql://") and "+asyncpg" not in url:
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    _engine = create_async_engine(url, echo=settings.DEBUG,
+        pool_size=5, max_overflow=10, pool_pre_ping=True, pool_recycle=300)
+    _SessionLocal = async_sessionmaker(bind=_engine, class_=AsyncSession,
+        expire_on_commit=False, autoflush=False, autocommit=False)
+    return _engine, _SessionLocal
 
 class Base(DeclarativeBase):
     pass
 
-
-async def get_db() -> AsyncSession:
-    """Dependency: yields an async DB session."""
-    async with AsyncSessionLocal() as session:
+async def get_db():
+    _, SessionLocal = _get_engine()
+    async with SessionLocal() as session:
         try:
             yield session
             await session.commit()
@@ -44,8 +40,8 @@ async def get_db() -> AsyncSession:
         finally:
             await session.close()
 
-
 async def init_db():
-    """Create all tables on startup (idempotent)."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    engine, _ = _get_engine()
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+    logger.info("Database connection OK")
