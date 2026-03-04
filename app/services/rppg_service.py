@@ -24,9 +24,9 @@ def compute_hrv_score(rppg_metric: Optional[RPPGMetric]) -> dict:
     if rppg_metric is None:
         return _empty_hrv_metrics()
 
-    hr = rppg_metric.heart_rate
-    rmssd = rppg_metric.hrv_rmssd
-    sdnn = rppg_metric.hrv_sdnn
+    hr = rppg_metric.bpm
+    rmssd = rppg_metric.hrv_rmssd or 0.0
+    sdnn = rppg_metric.hrv_sdnn or 0.0
 
     # Normalize: RMSSD < 10ms = max stress, 50ms+ = normal
     rmssd_norm = max(0.0, 1.0 - (rmssd / 50.0))
