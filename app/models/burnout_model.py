@@ -13,15 +13,12 @@ Output:
   risk_score  : float in [0, 1]   (higher = more at risk)
   confidence  : float in [0, 1]   (model certainty)
 """
-
 import logging
 import os
 from pathlib import Path
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -39,7 +36,6 @@ class _BurnoutMLP(nn.Module):
     def __init__(self):
         super().__init__()
         dims = [_INPUT_DIM] + _HIDDEN_DIMS
-
         layers = []
         for in_d, out_d in zip(dims[:-1], dims[1:]):
             layers += [
@@ -69,7 +65,12 @@ class BurnoutModel:
     def load(self) -> None:
         """Load model weights from disk or initialise fresh weights."""
         self._model = _BurnoutMLP().to(self._device)
+
+        # Use BURNOUT_MODEL_PATH from settings (defined in config.py)
         weight_path = Path(settings.BURNOUT_MODEL_PATH)
+
+        # Ensure the parent directory exists so save() works later
+        weight_path.parent.mkdir(parents=True, exist_ok=True)
 
         if weight_path.exists():
             try:
@@ -77,7 +78,9 @@ class BurnoutModel:
                 self._model.load_state_dict(state)
                 logger.info("Burnout model weights loaded from %s", weight_path)
             except Exception as exc:
-                logger.warning("Could not load weights (%s) – using random init", exc)
+                logger.warning(
+                    "Could not load weights (%s) – using random init", exc
+                )
         else:
             logger.info(
                 "No weights found at %s – using random initialisation "
@@ -87,7 +90,9 @@ class BurnoutModel:
 
         self._model.eval()
 
-    def predict(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def predict(
+        self, features: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Run inference.
 
@@ -104,10 +109,10 @@ class BurnoutModel:
 
         self._model.eval()
         with torch.no_grad():
-            logits = self._model(features)          # (batch, 2)
-            probs = torch.sigmoid(logits)            # (batch, 2)
-            risk_score = probs[:, 0]                 # first output = risk
-            confidence = probs[:, 1]                 # second output = confidence
+            logits = self._model(features)       # (batch, 2)
+            probs = torch.sigmoid(logits)         # (batch, 2)
+            risk_score = probs[:, 0]              # first output  = risk
+            confidence = probs[:, 1]              # second output = confidence
 
         return risk_score.squeeze(), confidence.squeeze()
 
@@ -115,6 +120,7 @@ class BurnoutModel:
         """Persist model weights."""
         if self._model is None:
             raise RuntimeError("Model not loaded")
+
         save_path = path or settings.BURNOUT_MODEL_PATH
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         torch.save(self._model.state_dict(), save_path)
