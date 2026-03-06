@@ -2,7 +2,10 @@
 CL-BEDS: Cognitive Load & Burnout Early Detection System
 Main FastAPI Application Entry Point
 """
-
+import os
+print("==============================")
+print("RAW DATABASE_URL:", os.environ.get("DATABASE_URL", "NOT SET AT ALL"))
+print("==============================")
 import logging
 from contextlib import asynccontextmanager
 
