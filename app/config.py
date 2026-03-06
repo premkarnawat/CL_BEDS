@@ -2,7 +2,6 @@
 CL-BEDS Configuration Module
 Loads all environment variables and exposes typed settings.
 """
-
 from functools import lru_cache
 from typing import List
 from pydantic_settings import BaseSettings
@@ -16,15 +15,16 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "production"
 
     # ── Supabase / Database ───────────────────────────────────────────────
+    # DATABASE_URL must be set on Render in this exact format:
+    # postgresql+asyncpg://postgres.PROJECT_ID:PASSWORD@aws-1-ap-southeast-1.pooler.supabase.com:6543/postgres
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
-    DATABASE_URL: str = ""   # postgresql+asyncpg://user:pass@host:port/db
+    DATABASE_URL: str = ""
 
     # ── JWT / Auth ────────────────────────────────────────────────────────
-    # Render generates SECRET_KEY automatically; we alias it as JWT_SECRET
     SECRET_KEY: str = "change-me-in-production"
-    JWT_SECRET: str = ""          # falls back to SECRET_KEY if blank
+    JWT_SECRET: str = ""
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
     GROQ_API_KEY: str = ""
-    LLM_PROVIDER: str = "openai"   # openai | anthropic | groq
+    LLM_PROVIDER: str = "openai"
     LLM_MODEL: str = "gpt-4o-mini"
 
     # ── CORS / Hosts ──────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "https://cl-beds.vercel.app",
     ]
-    ALLOWED_HOSTS: List[str] = ["*"]   # tighten in production
+    ALLOWED_HOSTS: List[str] = ["*"]
 
     # ── Rate Limiting ─────────────────────────────────────────────────────
     RATE_LIMIT_REQUESTS: int = 60
@@ -65,6 +65,4 @@ def get_settings() -> Settings:
     return Settings()
 
 
-# Module-level singleton — allows `from app.config import settings`
 settings = get_settings()
- 
