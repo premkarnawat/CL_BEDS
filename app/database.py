@@ -1,11 +1,12 @@
 """
-CL-BEDS Database — lazy asyncpg engine. Supabase compatible.
+CL-BEDS Database — lazy asyncpg engine. Supabase PgBouncer compatible.
 """
 
 import logging
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +30,22 @@ def _get_engine():
     elif url.startswith("postgresql://") and "+asyncpg" not in url:
         url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-    # ── Debug log (hide password) ──────────────────────────────────────
+    # ── Debug log without exposing password ────────────────────────────
     try:
         host_part = url.split("@")[-1]
         logger.info(">>> DB connecting to: %s", host_part)
     except Exception:
         pass
 
-    # ── Create engine (Supabase + PgBouncer safe config) ───────────────
+    # ── Create engine (PgBouncer safe) ─────────────────────────────────
     _engine = create_async_engine(
         url,
         echo=settings.DEBUG,
+        poolclass=NullPool,        # Required for Supabase PgBouncer
         pool_pre_ping=True,
-        pool_recycle=300,
         connect_args={
             "ssl": "require",
-            "statement_cache_size": 0,  # Required for Supabase PgBouncer
+            "statement_cache_size": 0,   # Disable asyncpg prepared statements
         },
     )
 
@@ -64,7 +65,9 @@ class Base(DeclarativeBase):
 
 
 async def get_db():
-    """Dependency for FastAPI routes"""
+    """
+    FastAPI dependency to get DB session
+    """
     _, SessionLocal = _get_engine()
 
     async with SessionLocal() as session:
@@ -79,7 +82,9 @@ async def get_db():
 
 
 async def init_db():
-    """Simple DB connection test at startup"""
+    """
+    Test database connection during startup
+    """
     engine, _ = _get_engine()
 
     async with engine.connect() as conn:
