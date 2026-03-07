@@ -44,7 +44,7 @@ def _get_engine():
         pool_recycle=300,
         connect_args={
             "ssl": "require",
-            "statement_cache_size": 0,  # 🔴 REQUIRED for Supabase PgBouncer
+            "statement_cache_size": 0,  # Required for Supabase PgBouncer
         },
     )
 
@@ -64,9 +64,7 @@ class Base(DeclarativeBase):
 
 
 async def get_db():
-    """
-    Dependency for FastAPI routes
-    """
+    """Dependency for FastAPI routes"""
     _, SessionLocal = _get_engine()
 
     async with SessionLocal() as session:
@@ -81,9 +79,7 @@ async def get_db():
 
 
 async def init_db():
-    """
-    Simple DB connection test at startup
-    """
+    """Simple DB connection test at startup"""
     engine, _ = _get_engine()
 
     async with engine.connect() as conn:
