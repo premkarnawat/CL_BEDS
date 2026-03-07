@@ -1,12 +1,11 @@
 """
-CL-BEDS Database — lazy asyncpg engine. Supabase PgBouncer compatible.
+CL-BEDS Database — Supabase + SQLAlchemy setup (psycopg3).
 """
 
 import logging
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.pool import NullPool
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from sqlalchemy import create_engine
 
 logger = logging.getLogger(__name__)
 
@@ -24,35 +23,27 @@ def _get_engine():
 
     url = settings.DATABASE_URL
 
-    # ── Fix URL scheme for asyncpg ─────────────────────────────────────
+    # Fix scheme if needed
     if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql+asyncpg://", 1)
-    elif url.startswith("postgresql://") and "+asyncpg" not in url:
-        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        url = url.replace("postgres://", "postgresql+psycopg://", 1)
+    elif url.startswith("postgresql://") and "+psycopg" not in url:
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
 
-    # ── Debug log without exposing password ────────────────────────────
     try:
         host_part = url.split("@")[-1]
         logger.info(">>> DB connecting to: %s", host_part)
     except Exception:
         pass
 
-    # ── Create engine (PgBouncer safe) ─────────────────────────────────
-    _engine = create_async_engine(
+    _engine = create_engine(
         url,
-        echo=settings.DEBUG,
-        poolclass=NullPool,        # Required for Supabase PgBouncer
         pool_pre_ping=True,
-        connect_args={
-            "ssl": "require",
-            "statement_cache_size": 0,   # Disable asyncpg prepared statements
-        },
+        pool_recycle=300,
+        echo=settings.DEBUG,
     )
 
-    _SessionLocal = async_sessionmaker(
+    _SessionLocal = sessionmaker(
         bind=_engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
         autoflush=False,
         autocommit=False,
     )
@@ -64,31 +55,24 @@ class Base(DeclarativeBase):
     pass
 
 
-async def get_db():
-    """
-    FastAPI dependency to get DB session
-    """
+def get_db():
     _, SessionLocal = _get_engine()
-
-    async with SessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 async def init_db():
-    """
-    Test database connection during startup
-    """
     engine, _ = _get_engine()
 
-    async with engine.connect() as conn:
-        result = await conn.execute(text("SELECT 1"))
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT 1"))
         logger.info(">>> DB ping result: %s", result.scalar())
 
     logger.info("✅ Database connection OK")
