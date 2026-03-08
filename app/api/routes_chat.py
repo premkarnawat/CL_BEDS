@@ -1,14 +1,14 @@
 """
 CL-BEDS AI Coach Chatbot Routes
 POST /chat
-GET  /chat/history/{session_id}
+GET  /chat/history
 """
 
 import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks
 from sqlalchemy import text
 
 from app.dependencies import CurrentUser, DBSession, Pagination
@@ -20,26 +20,13 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Send message
-# ---------------------------------------------------------------------------
-
 @router.post("", response_model=ChatResponse)
-async def chat(
-    payload: ChatMessageIn,
-    current_user: CurrentUser,
-    db: DBSession,
-    background_tasks: BackgroundTasks,
-):
-    """
-    Send a message to the AI coach and receive a response.
-    The backend automatically injects the latest SHAP context.
-    """
+async def chat(payload: ChatMessageIn, current_user: CurrentUser, db: DBSession, background_tasks: BackgroundTasks):
 
-    # --- Fetch latest SHAP report for context ---
-    shap_report: SHAPReport | None = None
+    shap_report = None
+
     try:
-        result = await db.execute(
+        result = db.execute(
             text("""
                 SELECT sr.risk_level, sr.confidence, sr.top_drivers, sr.session_id
                 FROM shap_reports sr
@@ -50,7 +37,9 @@ async def chat(
             """),
             {"uid": current_user.sub},
         )
+
         row = result.fetchone()
+
         if row:
             shap_report = SHAPReport(
                 risk_level=row.risk_level,
@@ -58,13 +47,14 @@ async def chat(
                 top_drivers=row.top_drivers,
                 session_id=str(row.session_id),
             )
-    except Exception as exc:
-        logger.warning("Could not fetch SHAP for chat context: %s", exc)
 
-    # --- Fetch recent chat history for continuity ---
-    history: list[ChatMessageOut] = []
+    except Exception as exc:
+        logger.warning("SHAP fetch failed: %s", exc)
+
+    history = []
+
     try:
-        h_result = await db.execute(
+        result = db.execute(
             text("""
                 SELECT role, content, created_at
                 FROM chat_logs
@@ -74,15 +64,17 @@ async def chat(
             """),
             {"uid": current_user.sub},
         )
-        h_rows = h_result.fetchall()
+
+        rows = result.fetchall()
+
         history = [
             ChatMessageOut(role=r.role, content=r.content, timestamp=r.created_at)
-            for r in reversed(h_rows)
+            for r in reversed(rows)
         ]
-    except Exception as exc:
-        logger.warning("Could not load chat history: %s", exc)
 
-    # --- Call LLM ---
+    except Exception as exc:
+        logger.warning("History load failed: %s", exc)
+
     reply, tokens = await get_coaching_response(
         user_message=payload.content,
         history=history,
@@ -91,16 +83,16 @@ async def chat(
 
     sid = payload.session_id or (str(shap_report.session_id) if shap_report else None)
 
-    # --- Persist messages in background ---
-    async def _save_messages():
+    def save_messages():
         try:
             now = datetime.now(tz=timezone.utc)
-            await db.execute(
+
+            db.execute(
                 text("""
                     INSERT INTO chat_logs (id, user_id, session_id, role, content, created_at)
                     VALUES
-                        (:uid1, :user_id, :sid, 'user', :user_msg, :now),
-                        (:uid2, :user_id, :sid, 'assistant', :assistant_msg, :now)
+                    (:uid1, :user_id, :sid, 'user', :user_msg, :now),
+                    (:uid2, :user_id, :sid, 'assistant', :assistant_msg, :now)
                 """),
                 {
                     "uid1": str(uuid.uuid4()),
@@ -112,27 +104,19 @@ async def chat(
                     "now": now,
                 },
             )
-            await db.commit()
-        except Exception as exc:
-            logger.error("Failed to persist chat messages: %s", exc)
 
-    background_tasks.add_task(_save_messages)
+        except Exception as exc:
+            logger.error("Chat save failed: %s", exc)
+
+    background_tasks.add_task(save_messages)
 
     return ChatResponse(reply=reply, session_id=sid, tokens_used=tokens)
 
 
-# ---------------------------------------------------------------------------
-# Chat history
-# ---------------------------------------------------------------------------
-
 @router.get("/history", response_model=list[ChatMessageOut])
-async def get_chat_history(
-    current_user: CurrentUser,
-    db: DBSession,
-    pagination: Pagination,
-):
-    """Return paginated chat history for the authenticated user."""
-    result = await db.execute(
+async def get_chat_history(current_user: CurrentUser, db: DBSession, pagination: Pagination):
+
+    result = db.execute(
         text("""
             SELECT role, content, created_at
             FROM chat_logs
@@ -140,9 +124,15 @@ async def get_chat_history(
             ORDER BY created_at DESC
             LIMIT :limit OFFSET :offset
         """),
-        {"uid": current_user.sub, "limit": pagination.page_size, "offset": pagination.offset},
+        {
+            "uid": current_user.sub,
+            "limit": pagination.page_size,
+            "offset": pagination.offset,
+        },
     )
+
     rows = result.fetchall()
+
     return [
         ChatMessageOut(role=r.role, content=r.content, timestamp=r.created_at)
         for r in reversed(rows)
