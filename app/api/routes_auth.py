@@ -45,8 +45,7 @@ logger = logging.getLogger(__name__)
 async def register(payload: RegisterRequest, db: DBSession):
     """Create a new user account."""
 
-    # Check if email already exists
-    result = db.execute(
+    result = await db.execute(
         text("SELECT id FROM users WHERE email = :email"),
         {"email": payload.email},
     )
@@ -59,29 +58,31 @@ async def register(payload: RegisterRequest, db: DBSession):
 
     user_id = uuid.uuid4()
     hashed = hash_password(payload.password)
+    now = datetime.now(timezone.utc)
 
-    # Insert user (role will default to 'student' in database)
-    db.execute(
+    await db.execute(
         text("""
-            INSERT INTO users (id, email, full_name, password_hash, created_at)
-            VALUES (:id, :email, :full_name, :password_hash, :now)
+        INSERT INTO users (id, email, full_name, password_hash, created_at)
+        VALUES (:id, :email, :full_name, :password_hash, :now)
         """),
         {
             "id": user_id,
             "email": payload.email,
             "full_name": payload.full_name,
             "password_hash": hashed,
-            "now": datetime.now(tz=timezone.utc),
+            "now": now,
         },
     )
+
+    await db.commit()
 
     logger.info("New user registered: %s", payload.email)
 
     return UserOut(
-    id=row.id,
-    email=row.email,
-    full_name=row.full_name,
-)
+        id=user_id,
+        email=payload.email,
+        full_name=payload.full_name,
+    )
 
 
 # -------------------------------------------------------------------
@@ -92,7 +93,7 @@ async def register(payload: RegisterRequest, db: DBSession):
 async def login(payload: LoginRequest, db: DBSession):
     """Authenticate user and return JWT tokens."""
 
-    result = db.execute(
+    result = await db.execute(
         text("SELECT id, role, password_hash FROM users WHERE email = :email"),
         {"email": payload.email},
     )
@@ -114,21 +115,22 @@ async def login(payload: LoginRequest, db: DBSession):
 
     refresh_token = create_refresh_token(subject=user_id)
 
-    # Store hashed refresh token
-    db.execute(
+    await db.execute(
         text("""
-            INSERT INTO refresh_tokens (user_id, token_hash, created_at)
-            VALUES (:uid, :tok, :now)
-            ON CONFLICT (user_id)
-            DO UPDATE SET token_hash = EXCLUDED.token_hash,
-                          created_at = EXCLUDED.created_at
+        INSERT INTO refresh_tokens (user_id, token_hash, created_at)
+        VALUES (:uid, :tok, :now)
+        ON CONFLICT (user_id)
+        DO UPDATE SET token_hash = EXCLUDED.token_hash,
+                      created_at = EXCLUDED.created_at
         """),
         {
             "uid": user_id,
             "tok": hash_password(refresh_token),
-            "now": datetime.now(tz=timezone.utc),
+            "now": datetime.now(timezone.utc),
         },
     )
+
+    await db.commit()
 
     return TokenResponse(
         access_token=access_token,
@@ -155,7 +157,7 @@ async def refresh_token(payload: RefreshTokenRequest, db: DBSession):
 
     user_id = decoded["sub"]
 
-    result = db.execute(
+    result = await db.execute(
         text("SELECT role FROM users WHERE id = :uid"),
         {"uid": user_id},
     )
@@ -183,18 +185,18 @@ async def refresh_token(payload: RefreshTokenRequest, db: DBSession):
 
 
 # -------------------------------------------------------------------
-# Get Current User
+# Current User
 # -------------------------------------------------------------------
 
 @router.get("/me", response_model=UserOut)
 async def get_me(current_user: CurrentUser, db: DBSession):
-    """Return currently authenticated user's profile."""
+    """Return authenticated user's profile."""
 
-    result = db.execute(
+    result = await db.execute(
         text("""
-            SELECT id, email, full_name, role
-            FROM users
-            WHERE id = :uid
+        SELECT id, email, full_name
+        FROM users
+        WHERE id = :uid
         """),
         {"uid": current_user.sub},
     )
@@ -211,7 +213,6 @@ async def get_me(current_user: CurrentUser, db: DBSession):
         id=row.id,
         email=row.email,
         full_name=row.full_name,
-        role=UserRole(row.role),
     )
 
 
@@ -223,9 +224,11 @@ async def get_me(current_user: CurrentUser, db: DBSession):
 async def logout(current_user: CurrentUser, db: DBSession):
     """Invalidate stored refresh token."""
 
-    db.execute(
+    await db.execute(
         text("DELETE FROM refresh_tokens WHERE user_id = :uid"),
         {"uid": current_user.sub},
     )
+
+    await db.commit()
 
     return None
