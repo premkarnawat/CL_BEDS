@@ -1,11 +1,15 @@
 """
-CL-BEDS Database — Supabase + SQLAlchemy setup (psycopg3).
+CL-BEDS Database — Async SQLAlchemy setup for Supabase (psycopg3)
 """
 
 import logging
 from sqlalchemy import text
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
-from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    AsyncSession,
+    async_sessionmaker,
+)
+from sqlalchemy.orm import DeclarativeBase
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +27,7 @@ def _get_engine():
 
     url = settings.DATABASE_URL
 
-    # Fix scheme if needed
+    # Fix scheme automatically
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql+psycopg://", 1)
     elif url.startswith("postgresql://") and "+psycopg" not in url:
@@ -35,17 +39,17 @@ def _get_engine():
     except Exception:
         pass
 
-    _engine = create_engine(
+    _engine = create_async_engine(
         url,
         pool_pre_ping=True,
         pool_recycle=300,
         echo=settings.DEBUG,
     )
 
-    _SessionLocal = sessionmaker(
+    _SessionLocal = async_sessionmaker(
         bind=_engine,
-        autoflush=False,
-        autocommit=False,
+        class_=AsyncSession,
+        expire_on_commit=False,
     )
 
     return _engine, _SessionLocal
@@ -55,24 +59,31 @@ class Base(DeclarativeBase):
     pass
 
 
-def get_db():
-    _, SessionLocal = _get_engine()
-    db = SessionLocal()
-    try:
-        yield db
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+# ---------------------------------------------------
+# FastAPI Dependency
+# ---------------------------------------------------
 
+async def get_db():
+    _, SessionLocal = _get_engine()
+
+    async with SessionLocal() as db:
+        try:
+            yield db
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+
+# ---------------------------------------------------
+# Startup DB check
+# ---------------------------------------------------
 
 async def init_db():
     engine, _ = _get_engine()
 
-    with engine.connect() as conn:
-        result = conn.execute(text("SELECT 1"))
+    async with engine.begin() as conn:
+        result = await conn.execute(text("SELECT 1"))
         logger.info(">>> DB ping result: %s", result.scalar())
 
     logger.info("✅ Database connection OK")
