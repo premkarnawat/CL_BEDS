@@ -31,7 +31,6 @@ from app.schemas.user import (
     RegisterRequest,
     TokenResponse,
     UserOut,
-    UserRole,
 )
 
 router = APIRouter()
@@ -79,11 +78,10 @@ async def register(payload: RegisterRequest, db: DBSession):
     logger.info("New user registered: %s", payload.email)
 
     return UserOut(
-        id=user_id,
-        email=payload.email,
-        full_name=payload.full_name,
-        role=UserRole.student,
-    )
+    id=row.id,
+    email=row.email,
+    full_name=row.full_name,
+)
 
 
 # -------------------------------------------------------------------
