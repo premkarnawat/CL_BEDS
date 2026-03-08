@@ -1,5 +1,6 @@
 """
 CL-BEDS Dashboard Routes
+
 GET  /dashboard/sessions
 GET  /dashboard/sessions/{session_id}
 GET  /dashboard/risk-trend
@@ -22,22 +23,28 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Sessions
-# ---------------------------------------------------------------------------
+# -------------------------------------------------------------------
+# Create Session
+# -------------------------------------------------------------------
 
 @router.post("/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
 async def create_session(payload: SessionCreate, current_user: CurrentUser, db: DBSession):
-    """Start a new monitoring session for the authenticated user."""
-    session_id = uuid.uuid4()
-    now = datetime.now(tz=timezone.utc)
+    """Start a monitoring session."""
 
-    await db.execute(
+    session_id = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+
+    db.execute(
         text("""
-            INSERT INTO sessions (id, user_id, label, started_at)
-            VALUES (:id, :uid, :label, :now)
+        INSERT INTO sessions (id, user_id, label, started_at)
+        VALUES (:id, :uid, :label, :now)
         """),
-        {"id": session_id, "uid": current_user.sub, "label": payload.label, "now": now},
+        {
+            "id": session_id,
+            "uid": current_user.sub,
+            "label": payload.label,
+            "now": now,
+        },
     )
 
     return SessionOut(
@@ -51,21 +58,32 @@ async def create_session(payload: SessionCreate, current_user: CurrentUser, db: 
     )
 
 
+# -------------------------------------------------------------------
+# List Sessions
+# -------------------------------------------------------------------
+
 @router.get("/sessions", response_model=list[SessionOut])
 async def list_sessions(current_user: CurrentUser, db: DBSession, pagination: Pagination):
-    """Return paginated list of the user's sessions."""
-    result = await db.execute(
+    """Return user's sessions."""
+
+    result = db.execute(
         text("""
-            SELECT id, user_id, label, started_at, ended_at,
-                   final_risk_level, final_risk_score
-            FROM sessions
-            WHERE user_id = :uid
-            ORDER BY started_at DESC
-            LIMIT :limit OFFSET :offset
+        SELECT id, user_id, label, started_at, ended_at,
+               final_risk_level, final_risk_score
+        FROM sessions
+        WHERE user_id = :uid
+        ORDER BY started_at DESC
+        LIMIT :limit OFFSET :offset
         """),
-        {"uid": current_user.sub, "limit": pagination.page_size, "offset": pagination.offset},
+        {
+            "uid": current_user.sub,
+            "limit": pagination.page_size,
+            "offset": pagination.offset,
+        },
     )
+
     rows = result.fetchall()
+
     return [
         SessionOut(
             id=r.id,
@@ -80,21 +98,31 @@ async def list_sessions(current_user: CurrentUser, db: DBSession, pagination: Pa
     ]
 
 
+# -------------------------------------------------------------------
+# Get Single Session
+# -------------------------------------------------------------------
+
 @router.get("/sessions/{session_id}", response_model=SessionOut)
 async def get_session(session_id: uuid.UUID, current_user: CurrentUser, db: DBSession):
-    """Return a specific session by ID (must belong to current user)."""
-    result = await db.execute(
+    """Fetch a specific session."""
+
+    result = db.execute(
         text("""
-            SELECT id, user_id, label, started_at, ended_at,
-                   final_risk_level, final_risk_score
-            FROM sessions
-            WHERE id = :sid AND user_id = :uid
+        SELECT id, user_id, label, started_at, ended_at,
+               final_risk_level, final_risk_score
+        FROM sessions
+        WHERE id = :sid AND user_id = :uid
         """),
-        {"sid": session_id, "uid": current_user.sub},
+        {
+            "sid": session_id,
+            "uid": current_user.sub,
+        },
     )
+
     row = result.fetchone()
+
     if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Session not found")
 
     return SessionOut(
         id=row.id,
@@ -107,30 +135,32 @@ async def get_session(session_id: uuid.UUID, current_user: CurrentUser, db: DBSe
     )
 
 
-# ---------------------------------------------------------------------------
-# Risk trend (last N data points)
-# ---------------------------------------------------------------------------
+# -------------------------------------------------------------------
+# Risk Trend
+# -------------------------------------------------------------------
 
 @router.get("/risk-trend")
-async def get_risk_trend(
-    current_user: CurrentUser,
-    db: DBSession,
-    limit: int = 50,
-):
-    """Return the last `limit` burnout risk scores for the user."""
-    result = await db.execute(
+async def get_risk_trend(current_user: CurrentUser, db: DBSession, limit: int = 50):
+    """Return burnout risk trend."""
+
+    result = db.execute(
         text("""
-            SELECT bm.recorded_at, bm.risk_score, bm.risk_level,
-                   bm.cmes_index, bm.hrv_stress, bm.backspace_ratio
-            FROM behavioral_metrics bm
-            JOIN sessions s ON s.id = bm.session_id
-            WHERE s.user_id = :uid
-            ORDER BY bm.recorded_at DESC
-            LIMIT :limit
+        SELECT bm.recorded_at, bm.risk_score, bm.risk_level,
+               bm.cmes_index, bm.hrv_stress, bm.backspace_ratio
+        FROM behavioral_metrics bm
+        JOIN sessions s ON s.id = bm.session_id
+        WHERE s.user_id = :uid
+        ORDER BY bm.recorded_at DESC
+        LIMIT :limit
         """),
-        {"uid": current_user.sub, "limit": min(limit, 200)},
+        {
+            "uid": current_user.sub,
+            "limit": min(limit, 200),
+        },
     )
+
     rows = result.fetchall()
+
     return [
         {
             "timestamp": r.recorded_at.isoformat(),
@@ -140,31 +170,34 @@ async def get_risk_trend(
             "hrv_stress": r.hrv_stress,
             "backspace_ratio": r.backspace_ratio,
         }
-        for r in reversed(rows)   # oldest first for charting
+        for r in reversed(rows)
     ]
 
 
-# ---------------------------------------------------------------------------
-# Latest SHAP report
-# ---------------------------------------------------------------------------
+# -------------------------------------------------------------------
+# Latest SHAP
+# -------------------------------------------------------------------
 
 @router.get("/latest-shap", response_model=SHAPReport)
 async def get_latest_shap(current_user: CurrentUser, db: DBSession):
-    """Return the most recent SHAP report for the user."""
-    result = await db.execute(
+    """Return latest SHAP explanation."""
+
+    result = db.execute(
         text("""
-            SELECT sr.risk_level, sr.confidence, sr.top_drivers, sr.session_id
-            FROM shap_reports sr
-            JOIN sessions s ON s.id = sr.session_id
-            WHERE s.user_id = :uid
-            ORDER BY sr.created_at DESC
-            LIMIT 1
+        SELECT sr.risk_level, sr.confidence, sr.top_drivers, sr.session_id
+        FROM shap_reports sr
+        JOIN sessions s ON s.id = sr.session_id
+        WHERE s.user_id = :uid
+        ORDER BY sr.created_at DESC
+        LIMIT 1
         """),
         {"uid": current_user.sub},
     )
+
     row = result.fetchone()
+
     if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No SHAP report found")
+        raise HTTPException(status_code=404, detail="No SHAP report found")
 
     return SHAPReport(
         risk_level=row.risk_level,
